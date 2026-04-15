@@ -19,6 +19,11 @@ enum AccountStatus {
   DISABLED
 }
 
+enum DisplayNamePreference {
+  FULL_NAME
+  NICKNAME
+}
+
 enum IdType {
   CEDULA
   PASSPORT
@@ -59,6 +64,12 @@ enum RewardClaimStatus {
   REJECTED
 }
 
+enum GroupJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model Province {
   id        Int      @id @default(autoincrement())
   name      String   @unique
@@ -71,6 +82,7 @@ model Province {
   registrationRequests RegistrationRequest[]
   registrationRequestProvinces RegistrationRequestProvince[]
   adminProvinces       AdminProvince[]
+  memberProvinces      MemberProvince[]
   whatsappGroups       WhatsappGroup[]
   trips                Trip[]
 
@@ -105,7 +117,13 @@ model UserProfile {
   phone     String?
 
   displayName String?
+  nickname    String?
+  displayNamePreference DisplayNamePreference @default(FULL_NAME)
+  profilePhotoUrl String?
   pointsBalance Int @default(0)
+
+  // Main WhatsApp group: every approved member has access unless banned.
+  isBannedFromMain Boolean @default(false)
 
   primaryProvinceId Int?
   primaryCantonId   Int?
@@ -120,6 +138,7 @@ model UserProfile {
   points         PointTransaction[]
   rewardClaims   RewardClaim[]
   tripRegistrations TripRegistration[]
+  reviewedTripRegistrations TripRegistration[] @relation("trip_reg_reviewed_by")
 
   createdWhatsappGroups WhatsappGroup[] @relation("whatsapp_groups_created_by")
   createdTrips          Trip[]          @relation("trips_created_by")
@@ -130,9 +149,31 @@ model UserProfile {
 
   localCredential LocalCredential?
 
+  memberProvinces MemberProvince[]
+  grantedMemberProvinces MemberProvince[] @relation("member_provinces_granted_by")
+
+  whatsappGroupJoinRequests WhatsappGroupJoinRequest[]
+  reviewedWhatsappGroupJoinRequests WhatsappGroupJoinRequest[] @relation("whatsapp_group_req_reviewed_by")
+
   @@index([role])
   @@index([status])
   @@map("user_profiles")
+}
+
+model MemberProvince {
+  userId     String @db.Uuid
+  provinceId Int
+  createdAt  DateTime @default(now())
+  grantedByUserId String? @db.Uuid
+
+  user     UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  province Province    @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  grantedBy UserProfile? @relation("member_provinces_granted_by", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  @@id([userId, provinceId])
+  @@index([provinceId])
+  @@map("member_provinces")
 }
 
 model LocalCredential {
@@ -164,6 +205,8 @@ model RegistrationRequest {
   status    RequestStatus @default(PENDING)
 
   fullName     String
+  nickname     String?
+  displayNamePreference DisplayNamePreference @default(FULL_NAME)
   email        String @unique
   phone        String
   idType       IdType
@@ -172,9 +215,14 @@ model RegistrationRequest {
 
   socialUrl String
 
+  // Dev/local auth: member chooses password at registration, but can't login until approved.
+  passwordHash String
+
   photo1Url String
   photo2Url String
   photo3Url String
+
+  profilePhotoUrl String?
 
   priorityProvinceId Int
   priorityCantonId   Int
@@ -230,6 +278,8 @@ model WhatsappGroup {
 
   access GroupAccess[]
 
+  joinRequests WhatsappGroupJoinRequest[]
+
   @@index([kind])
   @@index([provinceId])
   @@map("whatsapp_groups")
@@ -252,11 +302,33 @@ model GroupAccess {
   @@map("group_access")
 }
 
+model WhatsappGroupJoinRequest {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  groupId String @db.Uuid
+  status GroupJoinRequestStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  reviewedAt DateTime?
+  reviewedByUserId String? @db.Uuid
+  reviewNote String?
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  reviewedBy UserProfile? @relation("whatsapp_group_req_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, groupId])
+  @@index([groupId])
+  @@index([status])
+  @@map("whatsapp_group_join_requests")
+}
+
 model ContentPage {
   id        String   @id @default(uuid()) @db.Uuid
   slug      String   @unique
   title     String
   body      String
+  contentJson Json?
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 
@@ -276,6 +348,13 @@ model Trip {
 
   priceCents Int?
   capacity   Int?
+
+  // Bank/payment info (optional)
+  bankName          String?
+  bankAccountName   String?
+  bankAccountNumber String?
+  bankAccountType   String?
+  paymentInstructions String?
 
   createdByUserId String? @db.Uuid
 
@@ -321,11 +400,17 @@ model TripRegistration {
   amountCents Int?
   paymentProofUrl String?
 
+  reviewedAt DateTime?
+  reviewedByUserId String? @db.Uuid
+  reviewNote String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
   user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  reviewedBy UserProfile? @relation("trip_reg_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([tripId, userId])
   @@index([userId])

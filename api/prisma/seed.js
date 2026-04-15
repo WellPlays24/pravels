@@ -251,6 +251,48 @@ async function main() {
       });
     }
   }
+
+  // Dev Super Admin
+  const superAdminEmail = 'admin@gmail.com';
+  const superAdminId = '11111111-1111-1111-1111-111111111111';
+  const password = '123456';
+  const bcrypt = require('bcrypt');
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  await prisma.userProfile.upsert({
+    where: { email: superAdminEmail },
+    update: {
+      role: 'SUPER_ADMIN',
+      status: 'APPROVED',
+    },
+    create: {
+      id: superAdminId,
+      email: superAdminEmail,
+      role: 'SUPER_ADMIN',
+      status: 'APPROVED',
+      displayName: 'Super Admin',
+    },
+  });
+
+  const user = await prisma.userProfile.findUnique({ where: { email: superAdminEmail } });
+  if (!user) throw new Error('Super admin user missing after upsert');
+
+  await prisma.localCredential.upsert({
+    where: { userId: user.id },
+    update: { passwordHash },
+    create: { userId: user.id, passwordHash },
+  });
+
+  // Content pages (editable by SUPER_ADMIN)
+  await prisma.contentPage.upsert({
+    where: { slug: 'home' },
+    update: {},
+    create: {
+      slug: 'home',
+      title: 'Pravels',
+      body: 'Contenido pendiente. El super admin debe completar esta informacion desde el panel.',
+    },
+  });
 }
 
 main()
