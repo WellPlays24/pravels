@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  PROVINCE_ADMIN
+  MEMBER
+}
+
+enum AccountStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISABLED
+}
+
+enum IdType {
+  CEDULA
+  PASSPORT
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum GroupKind {
+  MAIN
+  PROVINCE
+  CUSTOM
+}
+
+enum TripStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum TripMediaKind {
+  FLYER
+  PHOTO
+}
+
+enum TripRegistrationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+enum RewardClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Province {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cantons Canton[]
+
+  registrationRequests RegistrationRequest[]
+  registrationRequestProvinces RegistrationRequestProvince[]
+  adminProvinces       AdminProvince[]
+  whatsappGroups       WhatsappGroup[]
+  trips                Trip[]
+
+  @@map("provinces")
+}
+
+model Canton {
+  id         Int      @id @default(autoincrement())
+  provinceId Int
+  name       String
+  slug       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+
+  registrationRequests RegistrationRequest[]
+  trips                Trip[]
+
+  @@unique([provinceId, slug])
+  @@index([provinceId])
+  @@map("cantons")
+}
+
+// Supabase Auth user mapping.
+// id = auth.users.id (UUID), but we avoid cross-schema FK here for portability.
+model UserProfile {
+  id        String        @id @db.Uuid
+  role      Role          @default(MEMBER)
+  status    AccountStatus @default(PENDING)
+  email     String        @unique
+  phone     String?
+
+  displayName String?
+  pointsBalance Int @default(0)
+
+  primaryProvinceId Int?
+  primaryCantonId   Int?
+
+  approvedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  adminProvinces AdminProvince[]
+  groupAccess    GroupAccess[]
+  points         PointTransaction[]
+  rewardClaims   RewardClaim[]
+  tripRegistrations TripRegistration[]
+
+  createdWhatsappGroups WhatsappGroup[] @relation("whatsapp_groups_created_by")
+  createdTrips          Trip[]          @relation("trips_created_by")
+  reviewedRequests      RegistrationRequest[] @relation("registration_requests_reviewed_by")
+  grantedGroupAccess    GroupAccess[]   @relation("group_access_granted_by")
+  createdPointTx        PointTransaction[] @relation("point_tx_created_by")
+  reviewedRewardClaims  RewardClaim[]   @relation("reward_claim_reviewed_by")
+
+  localCredential LocalCredential?
+
+  @@index([role])
+  @@index([status])
+  @@map("user_profiles")
+}
+
+model LocalCredential {
+  userId String @id @db.Uuid
+  passwordHash String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("local_credentials")
+}
+
+model AdminProvince {
+  userId     String @db.Uuid
+  provinceId Int
+  createdAt  DateTime @default(now())
+
+  user     UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  province Province    @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  @@id([userId, provinceId])
+  @@index([provinceId])
+  @@map("admin_provinces")
+}
+
+model RegistrationRequest {
+  id        String        @id @default(uuid()) @db.Uuid
+  status    RequestStatus @default(PENDING)
+
+  fullName     String
+  email        String @unique
+  phone        String
+  idType       IdType
+  idNumber     String
+  birthDate    DateTime @db.Date
+
+  socialUrl String
+
+  photo1Url String
+  photo2Url String
+  photo3Url String
+
+  priorityProvinceId Int
+  priorityCantonId   Int
+
+  // When approved, optionally link the created Supabase auth user id.
+  approvedAuthUserId String? @db.Uuid
+
+  submittedAt DateTime @default(now())
+  reviewedAt  DateTime?
+  reviewedByUserId String? @db.Uuid
+  reviewNote       String?
+
+  priorityProvince Province @relation(fields: [priorityProvinceId], references: [id], onDelete: Restrict)
+  priorityCanton   Canton   @relation(fields: [priorityCantonId], references: [id], onDelete: Restrict)
+
+  requestedProvinces RegistrationRequestProvince[]
+
+  reviewedBy UserProfile? @relation("registration_requests_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([priorityProvinceId])
+  @@map("registration_requests")
+}
+
+model RegistrationRequestProvince {
+  requestId  String @db.Uuid
+  provinceId Int
+
+  request  RegistrationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  province Province            @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  @@id([requestId, provinceId])
+  @@index([provinceId])
+  @@map("registration_request_provinces")
+}
+
+model WhatsappGroup {
+  id        String    @id @default(uuid()) @db.Uuid
+  kind      GroupKind
+  name      String
+  url       String
+  isActive  Boolean   @default(true)
+
+  // MAIN groups have null provinceId.
+  provinceId Int?
+
+  createdByUserId String? @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  province Province? @relation(fields: [provinceId], references: [id], onDelete: SetNull)
+  createdBy UserProfile? @relation("whatsapp_groups_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  access GroupAccess[]
+
+  @@index([kind])
+  @@index([provinceId])
+  @@map("whatsapp_groups")
+}
+
+model GroupAccess {
+  userId  String @db.Uuid
+  groupId String @db.Uuid
+
+  grantedByUserId String? @db.Uuid
+  createdAt DateTime @default(now())
+
+  user  UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  grantedBy UserProfile? @relation("group_access_granted_by", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  @@id([userId, groupId])
+  @@index([groupId])
+  @@map("group_access")
+}
+
+model ContentPage {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  title     String
+  body      String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("content_pages")
+}
+
+model Trip {
+  id          String    @id @default(uuid()) @db.Uuid
+  status      TripStatus @default(DRAFT)
+  title       String
+  description String
+  startsAt    DateTime
+  endsAt      DateTime
+
+  provinceId Int
+  cantonId   Int
+
+  priceCents Int?
+  capacity   Int?
+
+  createdByUserId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  canton   Canton   @relation(fields: [cantonId], references: [id], onDelete: Restrict)
+
+  media TripMedia[]
+  registrations TripRegistration[]
+
+  createdBy UserProfile? @relation("trips_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([provinceId])
+  @@index([startsAt])
+  @@map("trips")
+}
+
+model TripMedia {
+  id      String @id @default(uuid()) @db.Uuid
+  tripId  String @db.Uuid
+  kind    TripMediaKind
+  url     String
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@map("trip_media")
+}
+
+model TripRegistration {
+  id     String @id @default(uuid()) @db.Uuid
+  tripId String @db.Uuid
+  userId String @db.Uuid
+
+  status TripRegistrationStatus @default(PENDING)
+
+  amountCents Int?
+  paymentProofUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, userId])
+  @@index([userId])
+  @@index([tripId])
+  @@map("trip_registrations")
+}
+
+model PointTransaction {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  // positive or negative
+  delta Int
+  reason String
+  evidenceUrl String?
+
+  createdByUserId String? @db.Uuid
+  createdAt DateTime @default(now())
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdBy UserProfile? @relation("point_tx_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("point_transactions")
+}
+
+model RewardItem {
+  id        String @id @default(uuid()) @db.Uuid
+  name      String
+  description String?
+  pointsCost Int
+  stock      Int?
+  isActive   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  claims RewardClaim[]
+
+  @@index([isActive])
+  @@map("reward_items")
+}
+
+model RewardClaim {
+  id       String @id @default(uuid()) @db.Uuid
+  userId   String @db.Uuid
+  rewardId String @db.Uuid
+
+  status RewardClaimStatus @default(PENDING)
+  pointsCostAtClaim Int
+
+  createdAt DateTime @default(now())
+  reviewedAt DateTime?
+  reviewedByUserId String? @db.Uuid
+  reviewNote String?
+
+  user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reward RewardItem  @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+
+  reviewedBy UserProfile? @relation("reward_claim_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@map("reward_claims")
+}
