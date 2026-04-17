@@ -14,6 +14,11 @@ const registration_requests_controller_1 = require("./registration-requests.cont
 const content_pages_controller_1 = require("./content-pages.controller");
 const users_controller_1 = require("./users.controller");
 const whatsapp_group_requests_controller_1 = require("./whatsapp-group-requests.controller");
+const settings_controller_1 = require("./settings.controller");
+const points_rules_controller_1 = require("./points-rules.controller");
+const rewards_controller_1 = require("./rewards.controller");
+const reward_claims_controller_1 = require("./reward-claims.controller");
+const audit_controller_1 = require("./audit.controller");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -26,6 +31,11 @@ exports.AdminModule = AdminModule = __decorate([
             content_pages_controller_1.AdminContentPagesController,
             users_controller_1.AdminUsersController,
             whatsapp_group_requests_controller_1.AdminWhatsappGroupRequestsController,
+            settings_controller_1.AdminSettingsController,
+            points_rules_controller_1.AdminPointRulesController,
+            rewards_controller_1.AdminRewardsController,
+            reward_claims_controller_1.AdminRewardClaimsController,
+            audit_controller_1.AdminAuditController,
         ],
     })
 ], AdminModule);

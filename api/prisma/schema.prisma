@@ -12,6 +12,25 @@ enum Role {
   MEMBER
 }
 
+enum NotificationType {
+  BIRTHDAY_GREETING
+
+  TRIP_REGISTRATION_PENDING
+  TRIP_REGISTRATION_APPROVED
+  TRIP_REGISTRATION_REJECTED
+
+  REWARD_CLAIM_PENDING
+  REWARD_CLAIM_APPROVED
+  REWARD_CLAIM_REJECTED
+
+  GROUP_JOIN_PENDING
+  GROUP_JOIN_APPROVED
+  GROUP_JOIN_REJECTED
+
+  MEMBER_REQUEST_PENDING
+  MEMBER_REQUEST_APPROVED
+}
+
 enum AccountStatus {
   PENDING
   APPROVED
@@ -116,6 +135,8 @@ model UserProfile {
   email     String        @unique
   phone     String?
 
+  birthDate DateTime? @db.Date
+
   displayName String?
   nickname    String?
   displayNamePreference DisplayNamePreference @default(FULL_NAME)
@@ -124,6 +145,9 @@ model UserProfile {
 
   // Main WhatsApp group: every approved member has access unless banned.
   isBannedFromMain Boolean @default(false)
+
+  // If true, strikes won't matter and unban is manual.
+  isPermanentlyBanned Boolean @default(false)
 
   primaryProvinceId Int?
   primaryCantonId   Int?
@@ -147,6 +171,11 @@ model UserProfile {
   createdPointTx        PointTransaction[] @relation("point_tx_created_by")
   reviewedRewardClaims  RewardClaim[]   @relation("reward_claim_reviewed_by")
 
+  notifications Notification[]
+  notificationsAuthored Notification[] @relation("notification_actor")
+
+  auditLogs AuditLog[] @relation("audit_actor")
+
   localCredential LocalCredential?
 
   memberProvinces MemberProvince[]
@@ -155,9 +184,77 @@ model UserProfile {
   whatsappGroupJoinRequests WhatsappGroupJoinRequest[]
   reviewedWhatsappGroupJoinRequests WhatsappGroupJoinRequest[] @relation("whatsapp_group_req_reviewed_by")
 
+  strikes UserStrike[]
+  createdStrikes UserStrike[] @relation("user_strikes_created_by")
+
   @@index([role])
   @@index([status])
   @@map("user_profiles")
+}
+
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  actorUserId String? @db.Uuid
+  actorRole Role?
+
+  event String
+  method String
+  path String
+  query Json?
+  params Json?
+  body Json?
+
+  statusCode Int
+  durationMs Int
+  ip String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  actor UserProfile? @relation("audit_actor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([event])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  actorUserId String? @db.Uuid
+  type NotificationType
+  title String
+  body String
+  data Json?
+  readAt DateTime?
+  createdAt DateTime @default(now())
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actor UserProfile? @relation("notification_actor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+model UserStrike {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  createdByUserId String? @db.Uuid
+  note String?
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdBy UserProfile? @relation("user_strikes_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+  @@map("user_strikes")
 }
 
 model MemberProvince {
@@ -335,6 +432,18 @@ model ContentPage {
   @@map("content_pages")
 }
 
+model GeneralSetting {
+  id String @id @default("global")
+  communityName String @default("Pravels")
+  logoUrl String?
+  supportUserId String? @db.Uuid
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("general_settings")
+}
+
 model Trip {
   id          String    @id @default(uuid()) @db.Uuid
   status      TripStatus @default(DRAFT)
@@ -400,6 +509,9 @@ model TripRegistration {
   amountCents Int?
   paymentProofUrl String?
 
+  // If this registration was paid with an approved reward claim (eg. free trip).
+  rewardClaimId String? @db.Uuid
+
   reviewedAt DateTime?
   reviewedByUserId String? @db.Uuid
   reviewNote String?
@@ -410,11 +522,14 @@ model TripRegistration {
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
   user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  rewardClaim RewardClaim? @relation(fields: [rewardClaimId], references: [id], onDelete: SetNull)
+
   reviewedBy UserProfile? @relation("trip_reg_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([tripId, userId])
   @@index([userId])
   @@index([tripId])
+  @@index([rewardClaimId])
   @@map("trip_registrations")
 }
 
@@ -438,6 +553,21 @@ model PointTransaction {
   @@map("point_transactions")
 }
 
+model PointRule {
+  id String @id @default(uuid()) @db.Uuid
+  title String
+  description String?
+  points Int
+  isActive Boolean @default(true)
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("point_rules")
+}
+
 model RewardItem {
   id        String @id @default(uuid()) @db.Uuid
   name      String
@@ -445,6 +575,9 @@ model RewardItem {
   pointsCost Int
   stock      Int?
   isActive   Boolean @default(true)
+
+  // If true, an approved claim can be redeemed for a free trip.
+  grantsFreeTrip Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -463,6 +596,13 @@ model RewardClaim {
   status RewardClaimStatus @default(PENDING)
   pointsCostAtClaim Int
 
+  // Unique code shown to the member; used for redemption/verification.
+  redeemCode String? @unique
+
+  // Set when a claim is used (eg. applied to a trip registration).
+  redeemedAt DateTime?
+  redeemedTripId String? @db.Uuid
+
   createdAt DateTime @default(now())
   reviewedAt DateTime?
   reviewedByUserId String? @db.Uuid
@@ -471,9 +611,12 @@ model RewardClaim {
   user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
   reward RewardItem  @relation(fields: [rewardId], references: [id], onDelete: Restrict)
 
+  tripRegistrations TripRegistration[]
+
   reviewedBy UserProfile? @relation("reward_claim_reviewed_by", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([status])
+  @@index([redeemCode])
   @@map("reward_claims")
 }

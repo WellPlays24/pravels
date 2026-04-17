@@ -19,7 +19,11 @@ const auth_guard_1 = require("./auth/auth.guard");
 const me_module_1 = require("./me/me.module");
 const trips_module_1 = require("./trips/trips.module");
 const public_module_1 = require("./public/public.module");
+const audit_middleware_1 = require("./audit/audit.middleware");
 let AppModule = class AppModule {
+    configure(consumer) {
+        consumer.apply(audit_middleware_1.AuditMiddleware).forRoutes('*');
+    }
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
@@ -36,6 +40,7 @@ exports.AppModule = AppModule = __decorate([
         controllers: [app_controller_1.AppController],
         providers: [
             app_service_1.AppService,
+            audit_middleware_1.AuditMiddleware,
             {
                 provide: core_1.APP_GUARD,
                 useClass: auth_guard_1.AuthGuard,

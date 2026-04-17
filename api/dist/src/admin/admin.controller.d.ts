@@ -4,7 +4,8 @@ import { CreateWhatsappGroupDto, UpdateWhatsappGroupDto } from './whatsapp-group
 export declare class AdminController {
     private readonly prisma;
     constructor(prisma: PrismaService);
-    provinces(): Promise<{
+    private allowedProvinceIds;
+    provinces(req: AuthedRequest): Promise<{
         id: number;
         createdAt: Date;
         updatedAt: Date;

@@ -28,7 +28,13 @@ let AdminWhatsappGroupRequestsController = class AdminWhatsappGroupRequestsContr
             where: { userId: req.user.id },
             select: { provinceId: true },
         });
-        return adminProvinces.map((x) => x.provinceId);
+        if (adminProvinces.length)
+            return adminProvinces.map((x) => x.provinceId);
+        const me = await this.prisma.userProfile.findUnique({
+            where: { id: req.user.id },
+            select: { primaryProvinceId: true },
+        });
+        return me?.primaryProvinceId ? [me.primaryProvinceId] : [];
     }
     async list(req, statusRaw) {
         const status = statusRaw === 'APPROVED' || statusRaw === 'REJECTED' || statusRaw === 'PENDING'
@@ -78,7 +84,7 @@ let AdminWhatsappGroupRequestsController = class AdminWhatsappGroupRequestsContr
             update: { grantedByUserId: req.user.id },
             create: { userId: r.userId, groupId: r.groupId, grantedByUserId: req.user.id },
         });
-        return this.prisma.whatsappGroupJoinRequest.update({
+        const updated = await this.prisma.whatsappGroupJoinRequest.update({
             where: { id: r.id },
             data: {
                 status: 'APPROVED',
@@ -87,6 +93,17 @@ let AdminWhatsappGroupRequestsController = class AdminWhatsappGroupRequestsContr
                 reviewNote: null,
             },
         });
+        await this.prisma.notification.create({
+            data: {
+                userId: r.userId,
+                actorUserId: req.user.id,
+                type: 'GROUP_JOIN_APPROVED',
+                title: 'Solicitud de grupo aprobada',
+                body: `Tu solicitud para unirte al grupo "${r.group.name}" fue aprobada.`,
+                data: { groupId: r.groupId, href: '/groups' },
+            },
+        });
+        return updated;
     }
     async reject(req, id, body) {
         const r = await this.prisma.whatsappGroupJoinRequest.findUnique({
@@ -106,7 +123,7 @@ let AdminWhatsappGroupRequestsController = class AdminWhatsappGroupRequestsContr
                 throw new common_1.BadRequestException('Not allowed');
         }
         const note = body?.note ? String(body.note) : null;
-        return this.prisma.whatsappGroupJoinRequest.update({
+        const updated = await this.prisma.whatsappGroupJoinRequest.update({
             where: { id: r.id },
             data: {
                 status: 'REJECTED',
@@ -115,6 +132,17 @@ let AdminWhatsappGroupRequestsController = class AdminWhatsappGroupRequestsContr
                 reviewNote: note,
             },
         });
+        await this.prisma.notification.create({
+            data: {
+                userId: r.userId,
+                actorUserId: req.user.id,
+                type: 'GROUP_JOIN_REJECTED',
+                title: 'Solicitud de grupo rechazada',
+                body: `Tu solicitud para unirte al grupo "${r.group.name}" fue rechazada.${note ? ` Motivo: ${note}` : ''}`,
+                data: { groupId: r.groupId, href: '/groups' },
+            },
+        });
+        return updated;
     }
 };
 exports.AdminWhatsappGroupRequestsController = AdminWhatsappGroupRequestsController;

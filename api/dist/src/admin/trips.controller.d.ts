@@ -1,9 +1,12 @@
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthedRequest } from '../auth/auth.guard';
 import { AddTripMediaDto, CreateTripDto, UpdateTripDto, UploadTripMediaDto } from './trips.dto';
+import type { Response } from 'express';
 export declare class AdminTripsController {
     private readonly prisma;
     constructor(prisma: PrismaService);
+    private allowedProvinceIds;
+    reportPdf(req: AuthedRequest, id: string, res: Response): Promise<void>;
     allRegistrations(req: AuthedRequest, statusRaw?: string, tripId?: string): Promise<({
         trip: {
             province: {
@@ -47,12 +50,14 @@ export declare class AdminTripsController {
             role: import("@prisma/client").$Enums.Role;
             status: import("@prisma/client").$Enums.AccountStatus;
             phone: string | null;
+            birthDate: Date | null;
             displayName: string | null;
             nickname: string | null;
             displayNamePreference: import("@prisma/client").$Enums.DisplayNamePreference;
             profilePhotoUrl: string | null;
             pointsBalance: number;
             isBannedFromMain: boolean;
+            isPermanentlyBanned: boolean;
             primaryProvinceId: number | null;
             primaryCantonId: number | null;
             approvedAt: Date | null;
@@ -68,6 +73,7 @@ export declare class AdminTripsController {
         tripId: string;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewedByUserId: string | null;
         reviewNote: string | null;
@@ -338,12 +344,14 @@ export declare class AdminTripsController {
             role: import("@prisma/client").$Enums.Role;
             status: import("@prisma/client").$Enums.AccountStatus;
             phone: string | null;
+            birthDate: Date | null;
             displayName: string | null;
             nickname: string | null;
             displayNamePreference: import("@prisma/client").$Enums.DisplayNamePreference;
             profilePhotoUrl: string | null;
             pointsBalance: number;
             isBannedFromMain: boolean;
+            isPermanentlyBanned: boolean;
             primaryProvinceId: number | null;
             primaryCantonId: number | null;
             approvedAt: Date | null;
@@ -359,6 +367,7 @@ export declare class AdminTripsController {
         tripId: string;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewedByUserId: string | null;
         reviewNote: string | null;
@@ -372,6 +381,7 @@ export declare class AdminTripsController {
         tripId: string;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewedByUserId: string | null;
         reviewNote: string | null;
@@ -385,6 +395,7 @@ export declare class AdminTripsController {
         tripId: string;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewedByUserId: string | null;
         reviewNote: string | null;

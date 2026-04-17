@@ -56,6 +56,7 @@ const platform_express_1 = require("@nestjs/platform-express");
 const node_path_1 = __importDefault(require("node:path"));
 const promises_1 = require("node:fs/promises");
 const bcrypt = __importStar(require("bcrypt"));
+const notifications_util_1 = require("../notifications/notifications.util");
 function safeIdFolder(idNumber) {
     const cleaned = idNumber.trim();
     if (!/^[0-9A-Za-z-]+$/.test(cleaned)) {
@@ -147,6 +148,18 @@ let PublicRegistrationController = class PublicRegistrationController {
             },
             include: { requestedProvinces: true },
         });
+        const adminIds = await (0, notifications_util_1.findAdminRecipientIds)(this.prisma, pProvId);
+        if (adminIds.length) {
+            await this.prisma.notification.createMany({
+                data: adminIds.map((userId) => ({
+                    userId,
+                    type: 'MEMBER_REQUEST_PENDING',
+                    title: 'Nueva solicitud de miembro',
+                    body: `Nueva solicitud de miembro: ${String(fullName).trim()} (${String(email).trim()}).`,
+                    data: { requestId: reqRecord.id, provinceId: pProvId, href: `/admin/requests/${reqRecord.id}` },
+                })),
+            });
+        }
         return { requestId: reqRecord.id };
     }
     async status(id) {

@@ -3,6 +3,7 @@ import type { AuthedRequest } from '../auth/auth.guard';
 export declare class AdminRegistrationRequestsController {
     private readonly prisma;
     constructor(prisma: PrismaService);
+    private allowedProvinceIds;
     list(req: AuthedRequest, statusRaw?: string): Promise<({
         priorityProvince: {
             id: number;
@@ -36,6 +37,7 @@ export declare class AdminRegistrationRequestsController {
         email: string;
         status: import("@prisma/client").$Enums.RequestStatus;
         phone: string;
+        birthDate: Date;
         nickname: string | null;
         displayNamePreference: import("@prisma/client").$Enums.DisplayNamePreference;
         profilePhotoUrl: string | null;
@@ -46,7 +48,6 @@ export declare class AdminRegistrationRequestsController {
         fullName: string;
         idType: import("@prisma/client").$Enums.IdType;
         idNumber: string;
-        birthDate: Date;
         socialUrl: string;
         photo1Url: string;
         photo2Url: string;
@@ -89,6 +90,7 @@ export declare class AdminRegistrationRequestsController {
         email: string;
         status: import("@prisma/client").$Enums.RequestStatus;
         phone: string;
+        birthDate: Date;
         nickname: string | null;
         displayNamePreference: import("@prisma/client").$Enums.DisplayNamePreference;
         profilePhotoUrl: string | null;
@@ -99,7 +101,6 @@ export declare class AdminRegistrationRequestsController {
         fullName: string;
         idType: import("@prisma/client").$Enums.IdType;
         idNumber: string;
-        birthDate: Date;
         socialUrl: string;
         photo1Url: string;
         photo2Url: string;

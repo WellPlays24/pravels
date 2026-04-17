@@ -11,12 +11,14 @@ export declare class AdminWhatsappGroupRequestsController {
             role: import("@prisma/client").$Enums.Role;
             status: import("@prisma/client").$Enums.AccountStatus;
             phone: string | null;
+            birthDate: Date | null;
             displayName: string | null;
             nickname: string | null;
             displayNamePreference: import("@prisma/client").$Enums.DisplayNamePreference;
             profilePhotoUrl: string | null;
             pointsBalance: number;
             isBannedFromMain: boolean;
+            isPermanentlyBanned: boolean;
             primaryProvinceId: number | null;
             primaryCantonId: number | null;
             approvedAt: Date | null;

@@ -24,21 +24,218 @@ const node_crypto_1 = require("node:crypto");
 const prisma_service_1 = require("../prisma/prisma.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const trips_dto_1 = require("./trips.dto");
+const pdfkit_1 = __importDefault(require("pdfkit"));
+const promises_1 = require("node:fs/promises");
+const pdf_theme_1 = require("../reports/pdf-theme");
 let AdminTripsController = class AdminTripsController {
     prisma;
     constructor(prisma) {
         this.prisma = prisma;
+    }
+    async allowedProvinceIds(req) {
+        if (req.user.role !== 'PROVINCE_ADMIN')
+            return null;
+        const rows = await this.prisma.adminProvince.findMany({
+            where: { userId: req.user.id },
+            select: { provinceId: true },
+        });
+        if (rows.length)
+            return rows.map((x) => x.provinceId);
+        const me = await this.prisma.userProfile.findUnique({ where: { id: req.user.id }, select: { primaryProvinceId: true } });
+        return me?.primaryProvinceId ? [me.primaryProvinceId] : [];
+    }
+    async reportPdf(req, id, res) {
+        const settings = await this.prisma.generalSetting.findUnique({ where: { id: 'global' } });
+        const communityName = settings?.communityName?.trim() || 'Pravels';
+        const trip = await this.prisma.trip.findUnique({
+            where: { id },
+            include: { province: true, canton: true, media: { orderBy: { sortOrder: 'asc' } } },
+        });
+        if (!trip)
+            throw new common_1.NotFoundException('Not found');
+        if (req.user.role === 'PROVINCE_ADMIN') {
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
+                throw new common_1.BadRequestException('Not allowed');
+        }
+        const regs = await this.prisma.tripRegistration.findMany({
+            where: { tripId: id, status: 'CONFIRMED' },
+            include: { user: true },
+            orderBy: { createdAt: 'asc' },
+        });
+        const safeTitle = String(trip.title || 'viaje')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 80);
+        const filename = `reporte-viaje-${safeTitle || trip.id}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        const doc = new pdfkit_1.default({ size: 'A4', margin: 50 });
+        doc.pipe(res);
+        const pageW = doc.page.width;
+        const pageH = doc.page.height;
+        const margin = 50;
+        const contentW = pageW - margin * 2;
+        function sectionHeader(label, bg, fg) {
+            const y = doc.y;
+            doc.save();
+            doc.roundedRect(margin, y, contentW, 24, 8).fill(bg);
+            doc.restore();
+            doc.fillColor(fg).fontSize(12).text(label, margin + 10, y + 6, { width: contentW - 20 });
+            doc.fillColor('#000000');
+            doc.y = y + 34;
+        }
+        function cardText(text, bg) {
+            const y = doc.y;
+            const innerPadX = 12;
+            const innerPadY = 10;
+            const textW = contentW - innerPadX * 2;
+            const textH = doc.heightOfString(text, { width: textW, align: 'left' });
+            const cardH = textH + innerPadY * 2;
+            doc.save();
+            doc.roundedRect(margin, y, contentW, cardH, 10).fill(bg);
+            doc.restore();
+            doc.fillColor('#111827').fontSize(10).text(text, margin + innerPadX, y + innerPadY, {
+                width: textW,
+                align: 'left',
+            });
+            doc.fillColor('#000000');
+            doc.y = y + cardH + 10;
+        }
+        let logoPath = null;
+        if (settings?.logoUrl && settings.logoUrl.startsWith('/files/content/')) {
+            const base = process.env.PRAVELS_CONTENT_DIR;
+            const filenamePart = settings.logoUrl.split('/').pop() || '';
+            const decoded = decodeURIComponent(filenamePart);
+            if (base && decoded) {
+                const candidate = node_path_1.default.join(base, decoded);
+                try {
+                    await (0, promises_1.access)(candidate);
+                    const ext = node_path_1.default.extname(candidate).toLowerCase();
+                    if (ext === '.jpg' || ext === '.jpeg' || ext === '.png')
+                        logoPath = candidate;
+                }
+                catch {
+                }
+            }
+        }
+        const header = (0, pdf_theme_1.drawReportHeader)(doc, {
+            communityName,
+            title: 'Reporte de viaje',
+            logoPath,
+            margin,
+        });
+        const fmt = new Intl.DateTimeFormat('es-EC', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+        doc.y = header.headerHeight + 16;
+        const flyer = trip.media.find((m) => m.kind === 'FLYER') ?? trip.media[0];
+        let flyerNote = null;
+        let flyerPath = null;
+        if (flyer?.url && flyer.url.startsWith('/files/planes/')) {
+            const base = process.env.PRAVELS_PLANES_DIR;
+            const filenamePart = flyer.url.split('/').pop() || '';
+            const decoded = decodeURIComponent(filenamePart);
+            if (base && decoded) {
+                const candidate = node_path_1.default.join(base, decoded);
+                try {
+                    await (0, promises_1.access)(candidate);
+                    const ext = node_path_1.default.extname(candidate).toLowerCase();
+                    if (ext === '.jpg' || ext === '.jpeg' || ext === '.png') {
+                        flyerPath = candidate;
+                    }
+                    else {
+                        flyerNote = `Flyer no incluido (formato ${ext || 'desconocido'}).`;
+                    }
+                }
+                catch {
+                    flyerNote = 'Flyer no encontrado en disco.';
+                }
+            }
+        }
+        else if (flyer?.url) {
+            flyerNote = 'Flyer no incluido (URL externa o desconocida).';
+        }
+        const leftX = margin;
+        const rightX = margin + 280;
+        const topY = doc.y;
+        const rightW = pageW - rightX - margin;
+        doc.fontSize(16).fillColor('#111827').text(trip.title, leftX, topY, { width: 270 });
+        doc.moveDown(0.2);
+        doc.fontSize(10).fillColor('#374151');
+        doc.text(`Estado: ${trip.status}`, leftX);
+        doc.text(`Lugar: ${trip.province?.name ?? ''} - ${trip.canton?.name ?? ''}`, leftX);
+        doc.text(`Inicio: ${fmt.format(trip.startsAt)}`, leftX);
+        doc.text(`Fin: ${fmt.format(trip.endsAt)}`, leftX);
+        doc.fillColor('#000000');
+        if (flyerPath) {
+            doc.save();
+            doc.roundedRect(rightX, topY, rightW, 150, 12).clip();
+            doc.image(flyerPath, rightX, topY, { fit: [rightW, 150], align: 'center', valign: 'center' });
+            doc.restore();
+            doc.roundedRect(rightX, topY, rightW, 150, 12).strokeColor('#e5e7eb').lineWidth(1).stroke();
+        }
+        else {
+            doc.roundedRect(rightX, topY, rightW, 150, 12).fill('#f3f4f6');
+            doc.fillColor('#6b7280').fontSize(10).text('Sin flyer', rightX, topY + 65, { width: rightW, align: 'center' });
+            doc.fillColor('#000000');
+        }
+        doc.y = Math.max(doc.y, topY + 170);
+        doc.save();
+        doc.moveTo(margin, doc.y)
+            .lineTo(pageW - margin, doc.y)
+            .strokeColor(pdf_theme_1.REPORT_THEME.border)
+            .lineWidth(1)
+            .stroke();
+        doc.restore();
+        doc.y += 16;
+        if (flyerNote) {
+            doc.fontSize(9).fillColor('#6b7280').text(flyerNote);
+            doc.fillColor('#000000');
+        }
+        if (trip.description?.trim()) {
+            sectionHeader('Resumen', pdf_theme_1.REPORT_THEME.summaryBg, pdf_theme_1.REPORT_THEME.summaryFg);
+            cardText(trip.description.trim(), '#fff7ed');
+        }
+        sectionHeader(`Asistentes aprobados (${regs.length})`, pdf_theme_1.REPORT_THEME.attendeesBg, pdf_theme_1.REPORT_THEME.attendeesFg);
+        const rowW = contentW;
+        for (let i = 0; i < regs.length; i++) {
+            const r = regs[i];
+            const name = r.user.displayName?.trim() || r.user.email;
+            const line = `${i + 1}. ${name}`;
+            const email = r.user.email;
+            if (doc.y > 760)
+                doc.addPage();
+            const y = doc.y;
+            if (i % 2 === 0) {
+                doc.save();
+                doc.roundedRect(margin, y - 2, rowW, 20, 6).fill('#f9fafb');
+                doc.restore();
+            }
+            doc.fontSize(10).fillColor('#111827').text(line, margin + 8, y, { width: rowW - 16 });
+            doc.fontSize(9).fillColor('#6b7280').text(`<${email}>`, margin + 8, y + 11, { width: rowW - 16 });
+            doc.fillColor('#000000');
+            doc.y = y + 24;
+        }
+        doc.fontSize(8).fillColor('#6b7280').text(`Generado: ${fmt.format(new Date())}`, margin, pageH - margin + 10, {
+            width: contentW,
+            align: 'right',
+        });
+        doc.fillColor('#000000');
+        doc.end();
     }
     async allRegistrations(req, statusRaw, tripId) {
         const status = statusRaw === 'CONFIRMED' || statusRaw === 'CANCELLED' || statusRaw === 'PENDING'
             ? statusRaw
             : 'PENDING';
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const adminProvinces = await this.prisma.adminProvince.findMany({
-                where: { userId: req.user.id },
-                select: { provinceId: true },
-            });
-            const provinceIds = adminProvinces.map((x) => x.provinceId);
+            const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
             return this.prisma.tripRegistration.findMany({
                 where: {
                     status,
@@ -66,13 +263,9 @@ let AdminTripsController = class AdminTripsController {
     }
     async list(req) {
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const adminProvinces = await this.prisma.adminProvince.findMany({
-                where: { userId: req.user.id },
-                select: { provinceId: true },
-            });
-            const provinceIds = adminProvinces.map((x) => x.provinceId);
+            const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
             return this.prisma.trip.findMany({
-                where: { provinceId: { in: provinceIds } },
+                where: { provinceId: { in: provinceIds.length ? provinceIds : [-1] } },
                 include: { province: true, canton: true },
                 orderBy: { startsAt: 'desc' },
             });
@@ -93,10 +286,8 @@ let AdminTripsController = class AdminTripsController {
     }
     async create(req, dto) {
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: dto.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(dto.provinceId))
                 throw new common_1.BadRequestException('Not allowed for this province');
         }
         return this.prisma.trip.create({
@@ -127,10 +318,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         return trip;
@@ -140,10 +329,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const nextProvinceId = dto.provinceId ?? trip.provinceId;
@@ -181,10 +368,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         if (dto.kind !== 'FLYER' && dto.kind !== 'PHOTO')
@@ -203,10 +388,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         if (!file)
@@ -228,10 +411,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const media = await this.prisma.tripMedia.findUnique({ where: { id: mediaId } });
@@ -248,10 +429,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const now = new Date();
@@ -277,10 +456,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         return this.prisma.trip.update({ where: { id }, data: { status: 'CANCELLED' } });
@@ -290,10 +467,8 @@ let AdminTripsController = class AdminTripsController {
         if (!trip)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         return this.prisma.tripRegistration.findMany({
@@ -310,19 +485,42 @@ let AdminTripsController = class AdminTripsController {
         if (!reg)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: reg.trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(reg.trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
-        return this.prisma.tripRegistration.update({
-            where: { id: reg.id },
-            data: {
-                status: 'CONFIRMED',
-                reviewedAt: new Date(),
-                reviewedByUserId: req.user.id,
-            },
+        return this.prisma.$transaction(async (tx) => {
+            const updated = await tx.tripRegistration.update({
+                where: { id: reg.id },
+                data: {
+                    status: 'CONFIRMED',
+                    reviewedAt: new Date(),
+                    reviewedByUserId: req.user.id,
+                },
+            });
+            await tx.userProfile.update({
+                where: { id: reg.userId },
+                data: { pointsBalance: { increment: 1 } },
+            });
+            await tx.pointTransaction.create({
+                data: {
+                    userId: reg.userId,
+                    delta: 1,
+                    reason: `Asistir a un plan: ${reg.trip.title}`,
+                    createdByUserId: req.user.id,
+                },
+            });
+            await tx.notification.create({
+                data: {
+                    userId: reg.userId,
+                    actorUserId: req.user.id,
+                    type: 'TRIP_REGISTRATION_APPROVED',
+                    title: 'Inscripcion aprobada',
+                    body: `Tu inscripcion al viaje "${reg.trip.title}" fue aprobada.`,
+                    data: { tripId: reg.tripId, href: `/trips/${reg.tripId}` },
+                },
+            });
+            return updated;
         });
     }
     async rejectRegistration(req, registrationId, body) {
@@ -333,14 +531,12 @@ let AdminTripsController = class AdminTripsController {
         if (!reg)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: reg.trip.provinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(reg.trip.provinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const note = body?.note ? String(body.note) : null;
-        return this.prisma.tripRegistration.update({
+        const updated = await this.prisma.tripRegistration.update({
             where: { id: reg.id },
             data: {
                 status: 'CANCELLED',
@@ -349,9 +545,29 @@ let AdminTripsController = class AdminTripsController {
                 reviewNote: note,
             },
         });
+        await this.prisma.notification.create({
+            data: {
+                userId: reg.userId,
+                actorUserId: req.user.id,
+                type: 'TRIP_REGISTRATION_REJECTED',
+                title: 'Inscripcion rechazada',
+                body: `Tu inscripcion al viaje "${reg.trip.title}" fue rechazada.${note ? ` Motivo: ${note}` : ''}`,
+                data: { tripId: reg.tripId, href: `/trips/${reg.tripId}` },
+            },
+        });
+        return updated;
     }
 };
 exports.AdminTripsController = AdminTripsController;
+__decorate([
+    (0, common_1.Get)(':id/report.pdf'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], AdminTripsController.prototype, "reportPdf", null);
 __decorate([
     (0, common_1.Get)('registrations'),
     __param(0, (0, common_1.Req)()),

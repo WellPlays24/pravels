@@ -14,6 +14,7 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import * as bcrypt from 'bcrypt';
+import { findAdminRecipientIds } from '../notifications/notifications.util';
 
 function safeIdFolder(idNumber: string) {
   const cleaned = idNumber.trim();
@@ -165,6 +166,19 @@ export class PublicRegistrationController {
       },
       include: { requestedProvinces: true },
     });
+
+    const adminIds = await findAdminRecipientIds(this.prisma, pProvId);
+    if (adminIds.length) {
+      await this.prisma.notification.createMany({
+        data: adminIds.map((userId) => ({
+          userId,
+          type: 'MEMBER_REQUEST_PENDING',
+          title: 'Nueva solicitud de miembro',
+          body: `Nueva solicitud de miembro: ${String(fullName).trim()} (${String(email).trim()}).`,
+          data: { requestId: reqRecord.id, provinceId: pProvId, href: `/admin/requests/${reqRecord.id}` },
+        })),
+      });
+    }
 
     return { requestId: reqRecord.id };
   }

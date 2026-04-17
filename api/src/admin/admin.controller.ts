@@ -21,30 +21,43 @@ import { CreateWhatsappGroupDto, UpdateWhatsappGroupDto } from './whatsapp-group
 export class AdminController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get('provinces')
-  async provinces() {
-    return this.prisma.province.findMany({
-      orderBy: { name: 'asc' },
+  private async allowedProvinceIds(req: AuthedRequest) {
+    if (req.user.role !== 'PROVINCE_ADMIN') return null;
+    const rows = await this.prisma.adminProvince.findMany({
+      where: { userId: req.user.id },
+      select: { provinceId: true },
     });
+    if (rows.length) return rows.map((x) => x.provinceId);
+    const me = await this.prisma.userProfile.findUnique({ where: { id: req.user.id }, select: { primaryProvinceId: true } });
+    return me?.primaryProvinceId ? [me.primaryProvinceId] : [];
+  }
+
+  @Get('provinces')
+  async provinces(@Req() req: AuthedRequest) {
+    if (req.user.role === 'PROVINCE_ADMIN') {
+      const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
+      return this.prisma.province.findMany({
+        where: { id: { in: provinceIds.length ? provinceIds : [-1] } },
+        orderBy: { name: 'asc' },
+      });
+    }
+
+    return this.prisma.province.findMany({ orderBy: { name: 'asc' } });
   }
 
   @Get('whatsapp-groups')
   async listGroups(@Req() req: AuthedRequest) {
     // Province admins: can only manage their province groups + main groups
     if (req.user.role === 'PROVINCE_ADMIN') {
-      const adminProvinces = await this.prisma.adminProvince.findMany({
-        where: { userId: req.user.id },
-        select: { provinceId: true },
-      });
-      const provinceIds = adminProvinces.map((x) => x.provinceId);
+      const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
 
-      return this.prisma.whatsappGroup.findMany({
-        where: {
-          OR: [{ kind: 'MAIN' }, { provinceId: { in: provinceIds } }],
-        },
-        include: { province: true },
-        orderBy: [{ kind: 'asc' }, { name: 'asc' }],
-      });
+        return this.prisma.whatsappGroup.findMany({
+          where: {
+          OR: [{ kind: 'MAIN' }, { provinceId: { in: provinceIds.length ? provinceIds : [-1] } }],
+          },
+          include: { province: true },
+          orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+        });
     }
 
     return this.prisma.whatsappGroup.findMany({
@@ -66,10 +79,8 @@ export class AdminController {
     if (req.user.role === 'PROVINCE_ADMIN') {
       // must be within allowed provinces unless MAIN
       if (dto.kind !== 'MAIN') {
-        const allowed = await this.prisma.adminProvince.findFirst({
-          where: { userId: req.user.id, provinceId: dto.provinceId },
-        });
-        if (!allowed) throw new ForbiddenException('Not allowed for this province');
+        const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+        if (!allowedIds.includes(dto.provinceId!)) throw new ForbiddenException('Not allowed for this province');
       }
     }
 
@@ -97,10 +108,8 @@ export class AdminController {
 
     if (req.user.role === 'PROVINCE_ADMIN') {
       if (existing.kind !== 'MAIN') {
-        const allowed = await this.prisma.adminProvince.findFirst({
-          where: { userId: req.user.id, provinceId: existing.provinceId ?? undefined },
-        });
-        if (!allowed) throw new ForbiddenException('Not allowed');
+        const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+        if (existing.provinceId && !allowedIds.includes(existing.provinceId)) throw new ForbiddenException('Not allowed');
       }
     }
 
@@ -136,10 +145,8 @@ export class AdminController {
 
     if (req.user.role === 'PROVINCE_ADMIN') {
       if (existing.kind !== 'MAIN') {
-        const allowed = await this.prisma.adminProvince.findFirst({
-          where: { userId: req.user.id, provinceId: existing.provinceId ?? undefined },
-        });
-        if (!allowed) throw new ForbiddenException('Not allowed');
+        const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+        if (existing.provinceId && !allowedIds.includes(existing.provinceId)) throw new ForbiddenException('Not allowed');
       }
     }
 

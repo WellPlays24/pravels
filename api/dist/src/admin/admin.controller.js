@@ -22,21 +22,34 @@ let AdminController = class AdminController {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async provinces() {
-        return this.prisma.province.findMany({
-            orderBy: { name: 'asc' },
+    async allowedProvinceIds(req) {
+        if (req.user.role !== 'PROVINCE_ADMIN')
+            return null;
+        const rows = await this.prisma.adminProvince.findMany({
+            where: { userId: req.user.id },
+            select: { provinceId: true },
         });
+        if (rows.length)
+            return rows.map((x) => x.provinceId);
+        const me = await this.prisma.userProfile.findUnique({ where: { id: req.user.id }, select: { primaryProvinceId: true } });
+        return me?.primaryProvinceId ? [me.primaryProvinceId] : [];
+    }
+    async provinces(req) {
+        if (req.user.role === 'PROVINCE_ADMIN') {
+            const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
+            return this.prisma.province.findMany({
+                where: { id: { in: provinceIds.length ? provinceIds : [-1] } },
+                orderBy: { name: 'asc' },
+            });
+        }
+        return this.prisma.province.findMany({ orderBy: { name: 'asc' } });
     }
     async listGroups(req) {
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const adminProvinces = await this.prisma.adminProvince.findMany({
-                where: { userId: req.user.id },
-                select: { provinceId: true },
-            });
-            const provinceIds = adminProvinces.map((x) => x.provinceId);
+            const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
             return this.prisma.whatsappGroup.findMany({
                 where: {
-                    OR: [{ kind: 'MAIN' }, { provinceId: { in: provinceIds } }],
+                    OR: [{ kind: 'MAIN' }, { provinceId: { in: provinceIds.length ? provinceIds : [-1] } }],
                 },
                 include: { province: true },
                 orderBy: [{ kind: 'asc' }, { name: 'asc' }],
@@ -56,10 +69,8 @@ let AdminController = class AdminController {
         }
         if (req.user.role === 'PROVINCE_ADMIN') {
             if (dto.kind !== 'MAIN') {
-                const allowed = await this.prisma.adminProvince.findFirst({
-                    where: { userId: req.user.id, provinceId: dto.provinceId },
-                });
-                if (!allowed)
+                const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+                if (!allowedIds.includes(dto.provinceId))
                     throw new common_1.ForbiddenException('Not allowed for this province');
             }
         }
@@ -81,10 +92,8 @@ let AdminController = class AdminController {
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
             if (existing.kind !== 'MAIN') {
-                const allowed = await this.prisma.adminProvince.findFirst({
-                    where: { userId: req.user.id, provinceId: existing.provinceId ?? undefined },
-                });
-                if (!allowed)
+                const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+                if (existing.provinceId && !allowedIds.includes(existing.provinceId))
                     throw new common_1.ForbiddenException('Not allowed');
             }
         }
@@ -115,10 +124,8 @@ let AdminController = class AdminController {
             return { ok: true };
         if (req.user.role === 'PROVINCE_ADMIN') {
             if (existing.kind !== 'MAIN') {
-                const allowed = await this.prisma.adminProvince.findFirst({
-                    where: { userId: req.user.id, provinceId: existing.provinceId ?? undefined },
-                });
-                if (!allowed)
+                const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+                if (existing.provinceId && !allowedIds.includes(existing.provinceId))
                     throw new common_1.ForbiddenException('Not allowed');
             }
         }
@@ -129,8 +136,9 @@ let AdminController = class AdminController {
 exports.AdminController = AdminController;
 __decorate([
     (0, common_1.Get)('provinces'),
+    __param(0, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], AdminController.prototype, "provinces", null);
 __decorate([

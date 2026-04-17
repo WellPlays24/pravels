@@ -1,9 +1,11 @@
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthedRequest } from '../auth/auth.guard';
+import type { Response } from 'express';
 export declare class TripsController {
     private readonly prisma;
     constructor(prisma: PrismaService);
-    list(scopeRaw: string | undefined): Promise<({
+    list(req: AuthedRequest, scopeRaw: string | undefined): Promise<{
+        myRegistrationStatus: import("@prisma/client").$Enums.TripRegistrationStatus | null;
         province: {
             id: number;
             createdAt: Date;
@@ -27,7 +29,6 @@ export declare class TripsController {
             sortOrder: number;
             tripId: string;
         }[];
-    } & {
         id: string;
         status: import("@prisma/client").$Enums.TripStatus;
         createdAt: Date;
@@ -46,7 +47,7 @@ export declare class TripsController {
         bankAccountNumber: string | null;
         bankAccountType: string | null;
         paymentInstructions: string | null;
-    })[]>;
+    }[]>;
     get(id: string): Promise<{
         province: {
             id: number;
@@ -91,11 +92,13 @@ export declare class TripsController {
         bankAccountType: string | null;
         paymentInstructions: string | null;
     }>;
+    flyerPdf(req: AuthedRequest, id: string, inlineRaw: string | undefined, res: Response): Promise<void>;
     myRegistration(req: AuthedRequest, id: string): Promise<{
         id: string;
         status: import("@prisma/client").$Enums.TripRegistrationStatus;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewNote: string | null;
         createdAt: Date;
@@ -110,8 +113,10 @@ export declare class TripsController {
         tripId: string;
         amountCents: number | null;
         paymentProofUrl: string | null;
+        rewardClaimId: string | null;
         reviewedAt: Date | null;
         reviewedByUserId: string | null;
         reviewNote: string | null;
     }>;
+    registerWithReward(req: AuthedRequest, id: string, body: any): Promise<any>;
 }

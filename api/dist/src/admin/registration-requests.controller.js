@@ -22,18 +22,26 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
     constructor(prisma) {
         this.prisma = prisma;
     }
+    async allowedProvinceIds(req) {
+        if (req.user.role !== 'PROVINCE_ADMIN')
+            return null;
+        const rows = await this.prisma.adminProvince.findMany({
+            where: { userId: req.user.id },
+            select: { provinceId: true },
+        });
+        if (rows.length)
+            return rows.map((x) => x.provinceId);
+        const me = await this.prisma.userProfile.findUnique({ where: { id: req.user.id }, select: { primaryProvinceId: true } });
+        return me?.primaryProvinceId ? [me.primaryProvinceId] : [];
+    }
     async list(req, statusRaw) {
         const status = statusRaw === 'APPROVED' || statusRaw === 'REJECTED' ? statusRaw : 'PENDING';
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const adminProvinces = await this.prisma.adminProvince.findMany({
-                where: { userId: req.user.id },
-                select: { provinceId: true },
-            });
-            const provinceIds = adminProvinces.map((x) => x.provinceId);
+            const provinceIds = (await this.allowedProvinceIds(req)) ?? [];
             return this.prisma.registrationRequest.findMany({
                 where: {
                     status,
-                    priorityProvinceId: { in: provinceIds },
+                    priorityProvinceId: { in: provinceIds.length ? provinceIds : [-1] },
                 },
                 include: {
                     priorityProvince: true,
@@ -65,10 +73,8 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
         if (!rr)
             throw new common_1.NotFoundException('Not found');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: rr.priorityProvinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(rr.priorityProvinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         return rr;
@@ -83,10 +89,8 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
         if (rr.status !== 'PENDING')
             throw new common_1.BadRequestException('Request not pending');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: rr.priorityProvinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(rr.priorityProvinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const provinceIds = Array.from(new Set([
@@ -99,6 +103,7 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
                 role: 'MEMBER',
                 status: 'APPROVED',
                 phone: rr.phone,
+                birthDate: rr.birthDate,
                 displayName: rr.fullName,
                 nickname: rr.nickname,
                 displayNamePreference: rr.displayNamePreference,
@@ -112,6 +117,7 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
                 role: 'MEMBER',
                 status: 'APPROVED',
                 phone: rr.phone,
+                birthDate: rr.birthDate,
                 displayName: rr.fullName,
                 nickname: rr.nickname,
                 displayNamePreference: rr.displayNamePreference,
@@ -141,6 +147,16 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
                 reviewNote: null,
             },
         });
+        await this.prisma.notification.create({
+            data: {
+                userId: user.id,
+                actorUserId: req.user.id,
+                type: 'MEMBER_REQUEST_APPROVED',
+                title: 'Registro aprobado',
+                body: 'Tu registro fue aprobado. Ya puedes iniciar sesion y unirte a los planes.',
+                data: { href: '/trips' },
+            },
+        });
         return { ok: true };
     }
     async reject(req, id, body) {
@@ -150,10 +166,8 @@ let AdminRegistrationRequestsController = class AdminRegistrationRequestsControl
         if (rr.status !== 'PENDING')
             throw new common_1.BadRequestException('Request not pending');
         if (req.user.role === 'PROVINCE_ADMIN') {
-            const allowed = await this.prisma.adminProvince.findFirst({
-                where: { userId: req.user.id, provinceId: rr.priorityProvinceId },
-            });
-            if (!allowed)
+            const allowedIds = (await this.allowedProvinceIds(req)) ?? [];
+            if (!allowedIds.includes(rr.priorityProvinceId))
                 throw new common_1.BadRequestException('Not allowed');
         }
         const note = body?.note ? String(body.note) : null;
